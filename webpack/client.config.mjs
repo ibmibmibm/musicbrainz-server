@@ -235,23 +235,38 @@ const MB_LANGUAGES = shell.exec(
   return accum;
 }, []);
 
+/*
+ * Locales in poFile.LOCALE_ALIASES have no .po file of their own, so the
+ * find command cannot see them. The loop that follows adds them.
+ */
+for (const lang of Object.keys(poFile.LOCALE_ALIASES)) {
+  if (!MB_LANGUAGES.includes(lang)) {
+    MB_LANGUAGES.push(lang);
+  }
+}
+
 MB_LANGUAGES.forEach(function (lang) {
   const langJedData = cloneObjectDeep(jedDataTemplate.en);
   const fileName = `jed-${lang}`;
   const filePath = path.resolve(BUILD_DIR, `${fileName}.source.js`);
   const fileMtime = mtime(filePath);
-  let loadedNewPoData = false;
-
-  GETTEXT_DOMAINS.forEach(function (domain) {
-    const domainJedData = loadNewerPo(domain, lang, fileMtime);
-
-    if (domainJedData) {
-      loadedNewPoData = true;
-      langJedData.locale_data[domain] = domainJedData.locale_data[domain];
-    }
-  });
+  const loadedNewPoData = GETTEXT_DOMAINS.some(
+    domain => findNewerPo(domain, lang, fileMtime) !== null,
+  );
 
   if (loadedNewPoData) {
+    /*
+     * langJedData starts as a copy of the English template. This loop must
+     * reload every domain, because a domain that it skips stays English.
+     */
+    GETTEXT_DOMAINS.forEach(function (domain) {
+      const domainJedData = loadNewerPo(domain, lang, null);
+
+      if (domainJedData) {
+        langJedData.locale_data[domain] = domainJedData.locale_data[domain];
+      }
+    });
+
     const source = (
       'window[' + JSON.stringify(GLOBAL_JS_NAMESPACE) + ']' +
       '.jedData[' + JSON.stringify(lang) + '] = ' +
