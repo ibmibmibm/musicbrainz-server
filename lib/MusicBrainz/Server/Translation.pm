@@ -7,7 +7,7 @@ use DateTime::Locale;
 use I18N::LangTags ();
 use I18N::LangTags::Detect;
 use List::AllUtils qw( any sort_by );
-use Locale::Messages qw( bindtextdomain LC_MESSAGES );
+use Locale::Messages qw( bindtextdomain nl_putenv LC_MESSAGES );
 use Locale::Util qw( web_set_locale );
 use POSIX qw( setlocale );
 use Text::Balanced qw( extract_bracketed );
@@ -92,6 +92,18 @@ sub _bind_domain
     $self->{bound} = 1;
 }
 
+# gettext reads LANGUAGE before LC_MESSAGES, and LANGUAGE can name a locale
+# that the system does not have. A locale with no entry here clears it.
+my %CATALOG_FOR = (
+    'zh_TW' => 'zh_Hant',
+);
+
+sub _use_catalog_for {
+    my $lang = shift;
+    nl_putenv('LANGUAGE=' . ($CATALOG_FOR{$lang} // ''));
+    return $lang;
+}
+
 sub build_languages_from_header
 {
     my ($self, $headers) = @_;
@@ -134,7 +146,7 @@ sub set_language
         # Force setting 'es_419' which seems to not be recognized by
         # Locale::Util most likely, or I18N::LangTags::Detect maybe.
         # A more definitive fix should be implemented for MBS-13446.
-        return contains_string(\@avail_lang, 'es_419') ? 'es_419' : 'en';
+        return _use_catalog_for(contains_string(\@avail_lang, 'es_419') ? 'es_419' : 'en');
     }
     # Strip off charset
     $set_lang =~ s/\.utf-8//;
@@ -142,15 +154,15 @@ sub set_language
     my $set_lang_nocountry = $set_lang =~ s/_[A-Z]{2}//r;
     # Change en_AQ back to en-aq to compare with MB_LANGUAGES
     if (any { $set_lang eq $_ || $set_lang_munge eq $_ } DBDefs->MB_LANGUAGES) {
-        return $set_lang;
+        return _use_catalog_for($set_lang);
     }
     # Check if the language without country code is in MB_LANGUAGES
     elsif (contains_string([ DBDefs->MB_LANGUAGES ], $set_lang_nocountry)) {
-        return $set_lang_nocountry;
+        return _use_catalog_for($set_lang_nocountry);
     }
     # Give up, return the full language even though it looks wrong
     else {
-        return $set_lang;
+        return _use_catalog_for($set_lang);
     }
 }
 
@@ -158,14 +170,17 @@ sub run_without_translations {
     my ($self, $code) = @_;
 
     my $prev_locale = setlocale(LC_MESSAGES);
+    my $prev_language = $ENV{LANGUAGE};
     $self->unset_language();
     $code->();
     setlocale(LC_MESSAGES, $prev_locale);
+    nl_putenv('LANGUAGE=' . ($prev_language // ''));
     return;
 }
 
 sub unset_language
 {
+    nl_putenv('LANGUAGE=');
     web_set_locale([ 'en' ], [ 'utf-8' ], LC_MESSAGES);
 }
 
@@ -187,16 +202,24 @@ sub language_from_cookie
     }
 }
 
+# Some MB_LANGUAGES codes are not CLDR codes. This map gives the closest
+# CLDR code, and only for the native names in the language selector.
+my %CLDR_CODE_FOR = (
+    'zh-TW' => 'zh-Hant-TW',
+);
+
+sub _cldr_code { $CLDR_CODE_FOR{ $_[0] } // $_[0] }
+
 sub all_languages
 {
     my @lang_with_locale = sort_by { ucfirst $_->[1]->native_language }
-                           map { [ $_ => DateTime::Locale->load($_) ] }
-                           grep { my $l = $_;
+                           map { [ $_ => DateTime::Locale->load(_cldr_code($_)) ] }
+                           grep { my $l = _cldr_code($_);
                                   grep { $l eq $_ } DateTime::Locale->codes() }
                            map { s/-([a-z]{2})/-\U$1/r } DBDefs->MB_LANGUAGES;
     my @lang_without_locale = sort_by { $_->[1]->{id} }
                               map { [ $_ => {'id' => $_, 'native_language' => ''} ] }
-                              grep { my $l = $_;
+                              grep { my $l = _cldr_code($_);
                                      !(grep { $l eq $_ } DateTime::Locale->codes()) }
                               map { s/-([a-z]{2})/-\U$1/r } DBDefs->MB_LANGUAGES;
     my @languages = (@lang_with_locale, @lang_without_locale);

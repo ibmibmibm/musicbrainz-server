@@ -21,23 +21,51 @@ function getPath(domain: string, locale: string) {
   return path.resolve(PO_DIR, `${domain}.${locale}.po`);
 }
 
-export function find(domain: string, locale: string): string {
-  let fpath = getPath(domain, locale);
+/*
+ * Locales that read the catalogs of another locale. zh_TW has no .po files
+ * of its own, so it reads the zh_Hant files.
+ */
+export const LOCALE_ALIASES: {+[locale: string]: string} = {
+  zh_TW: 'zh_Hant',
+};
 
+function exists(fpath: string): boolean {
   try {
     fs.statSync(fpath);
+    return true;
   } catch (err) {
-    if (err.code === 'ENOENT' && /_/.test(locale)) {
-      const fallback = fpath.replace(LOCALE_EXT, '.po');
+    if (err.code === 'ENOENT') {
+      return false;
+    }
+    throw err;
+  }
+}
 
-      console.warn(`Warning: ${fpath} does not exist, trying ${fallback}`);
+export function find(domain: string, locale: string): string {
+  const fpath = getPath(domain, locale);
 
-      fpath = fallback;
-    } else {
-      throw err;
+  if (exists(fpath)) {
+    return fpath;
+  }
+
+  const alias = LOCALE_ALIASES[locale];
+  if (alias != null) {
+    const aliased = getPath(domain, alias);
+    if (exists(aliased)) {
+      return aliased;
     }
   }
 
+  if (/_/.test(locale)) {
+    const fallback = fpath.replace(LOCALE_EXT, '.po');
+
+    console.warn(`Warning: ${fpath} does not exist, trying ${fallback}`);
+
+    return fallback;
+  }
+
+  // There is no other file to try. This stat throws the original ENOENT.
+  fs.statSync(fpath);
   return fpath;
 }
 
