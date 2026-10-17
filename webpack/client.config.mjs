@@ -253,18 +253,23 @@ MB_LANGUAGES.forEach(function (lang) {
   const fileName = `jed-${lang}`;
   const filePath = path.resolve(BUILD_DIR, `${fileName}.source.js`);
   const fileMtime = mtime(filePath);
-  let loadedNewPoData = false;
-
-  GETTEXT_DOMAINS.forEach(function (domain) {
-    const domainJedData = loadNewerPo(domain, lang, fileMtime);
-
-    if (domainJedData) {
-      loadedNewPoData = true;
-      langJedData.locale_data[domain] = domainJedData.locale_data[domain];
-    }
-  });
+  const loadedNewPoData = GETTEXT_DOMAINS.some(
+    domain => findNewerPo(domain, lang, fileMtime) !== null,
+  );
 
   if (loadedNewPoData) {
+    /*
+     * langJedData starts as a copy of the English template. This loop must
+     * reload every domain, because a domain that it skips stays English.
+     */
+    GETTEXT_DOMAINS.forEach(function (domain) {
+      const domainJedData = loadNewerPo(domain, lang, null);
+
+      if (domainJedData) {
+        langJedData.locale_data[domain] = domainJedData.locale_data[domain];
+      }
+    });
+
     const source = (
       'window[' + JSON.stringify(GLOBAL_JS_NAMESPACE) + ']' +
       '.jedData[' + JSON.stringify(lang) + '] = ' +
