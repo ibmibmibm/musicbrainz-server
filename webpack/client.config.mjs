@@ -158,16 +158,14 @@ function mtime(fpath) {
   }
 }
 
-function findNewerPo(domain, lang, bundleMtime) {
+function findPo(domain, lang) {
   const srcPo = poFile.find(domain, lang);
   const poMtime = mtime(srcPo);
   if (poMtime === null) {
     console.warn(`Warning: ${srcPo} does not exist, skipping`);
     return null;
-  } else if (bundleMtime && bundleMtime >= poMtime) {
-    return null;
   }
-  return srcPo;
+  return {domain, mtime: poMtime, path: srcPo};
 }
 
 function createJsPo(srcPo, lang) {
@@ -209,11 +207,7 @@ function createJsPo(srcPo, lang) {
   return jedData;
 }
 
-function loadNewerPo(domain, lang, bundleMtime) {
-  const srcPo = findNewerPo(domain, lang, bundleMtime);
-  if (!srcPo) {
-    return null;
-  }
+function loadPo(domain, srcPo, lang) {
   let jedData;
   if (domain === 'mb_server') {
     jedData = createJsPo(srcPo, lang);
@@ -253,18 +247,25 @@ MB_LANGUAGES.forEach(function (lang) {
   const fileName = `jed-${lang}`;
   const filePath = path.resolve(BUILD_DIR, `${fileName}.source.js`);
   const fileMtime = mtime(filePath);
-  let loadedNewPoData = false;
+  // findPo and poFile.find can warn, so find each .po file only once.
+  const poFiles = GETTEXT_DOMAINS
+    .map(domain => findPo(domain, lang))
+    .filter(Boolean);
+  const hasNewerPo = poFiles.some(
+    po => fileMtime === null || po.mtime > fileMtime,
+  );
 
-  GETTEXT_DOMAINS.forEach(function (domain) {
-    const domainJedData = loadNewerPo(domain, lang, fileMtime);
+  if (hasNewerPo) {
+    /*
+     * langJedData starts as a copy of the English template. This loop must
+     * reload every domain, because a domain that it skips stays English.
+     */
+    poFiles.forEach(function (po) {
+      const domainJedData = loadPo(po.domain, po.path, lang);
+      langJedData.locale_data[po.domain] =
+        domainJedData.locale_data[po.domain];
+    });
 
-    if (domainJedData) {
-      loadedNewPoData = true;
-      langJedData.locale_data[domain] = domainJedData.locale_data[domain];
-    }
-  });
-
-  if (loadedNewPoData) {
     const source = (
       'window[' + JSON.stringify(GLOBAL_JS_NAMESPACE) + ']' +
       '.jedData[' + JSON.stringify(lang) + '] = ' +
