@@ -127,7 +127,30 @@ my %SYSTEM_LOCALE_FOR = (
     zh_Hant => 'zh_TW',
 );
 
+# Browsers name a Chinese variant by region, for example zh-TW, but
+# MB_LANGUAGES can name it by script, for example zh-hant. These are the
+# scripts that the regions use.
+my %SCRIPT_LOCALE_FOR = (
+    zh_CN => 'zh_Hans',
+    zh_HK => 'zh_Hant',
+    zh_MO => 'zh_Hant',
+    zh_MY => 'zh_Hans',
+    zh_SG => 'zh_Hans',
+    zh_TW => 'zh_Hant',
+);
+
 sub _set_gettext_language { nl_putenv('LANGUAGE=' . (shift // '')) }
+
+# The browser languages that are in MB_LANGUAGES, in order of preference.
+# A region code that has a script in %SCRIPT_LOCALE_FOR is followed by the
+# script form, so that zh-TW selects zh-hant before the zh that follows.
+sub _browser_languages
+{
+    my ($self, $mb_languages) = @_;
+    return grep { $mb_languages->{$_} }
+           map { ($_, $SCRIPT_LOCALE_FOR{$_} // ()) }
+           map { posix_locale($_) } $self->all_system_languages;
+}
 
 sub build_languages_from_header
 {
@@ -164,8 +187,7 @@ sub set_language
     if (defined $lang) {
         @avail_lang = (posix_locale($lang));
     } elsif (DBDefs->LANGUAGE_FALLBACK_TO_BROWSER) {
-        @avail_lang = grep { $mb_languages{$_} }
-                      map { posix_locale($_) } $self->all_system_languages;
+        @avail_lang = $self->_browser_languages(\%mb_languages);
     } else {
         @avail_lang = ('en');
     }
