@@ -80,6 +80,40 @@ test 'all_languages with a script subtag' => sub {
     }, qw( en es-419 fr-ca zh-hans zh-hant ));
 };
 
+test 'Browser languages with a Chinese region' => sub {
+    my $translation = MusicBrainz::Server::Translation->instance;
+    my $browser_languages = sub {
+        my ($mb_languages, @languages) = @_;
+        $translation->languages(\@languages);
+        my %mb_languages = map { $_ => 1 } @$mb_languages;
+        return [ $translation->_browser_languages(\%mb_languages) ];
+    };
+    my @both = qw( en zh zh_Hans zh_Hant );
+    for my $region (qw( zh-tw zh-hk zh-mo )) {
+        is_deeply($browser_languages->(\@both, $region, 'zh', 'en'),
+                  [qw( zh_Hant zh en )], "$region selects zh_Hant first");
+    }
+    for my $region (qw( zh-cn zh-sg zh-my )) {
+        is_deeply($browser_languages->(\@both, $region, 'zh', 'en'),
+                  [qw( zh_Hans zh en )], "$region selects zh_Hans first");
+    }
+    is_deeply($browser_languages->([qw( en zh_TW zh_Hant )], 'zh-tw', 'en'),
+              [qw( zh_TW zh_Hant en )], 'An exact match comes first');
+    is_deeply($browser_languages->([qw( en zh )], 'zh-tw', 'zh', 'en'),
+              [qw( zh en )], 'Without zh-hant, zh-TW selects zh');
+
+    for my $header ('en;q=1, zh-TW;q=0.8', 'zh-TW;q=0.8, en;q=1') {
+        $translation->build_languages_from_header(HTTP::Headers->new(
+            'Accept-Language' => $header,
+        ));
+        my %mb_languages = map { $_ => 1 } qw( en zh_Hant );
+        is_deeply([ $translation->_browser_languages(\%mb_languages) ],
+                  [qw( en zh_Hant )],
+                  "Accept-Language $header keeps the order of quality values");
+    }
+    $translation->languages([]);
+};
+
 test 'set_language with zh-Hans' => sub {
     my $prev_locale = setlocale(LC_MESSAGES);
     plan skip_all => 'The zh_CN.UTF-8 system locale is not installed'
@@ -128,6 +162,10 @@ test 'set_language with a script subtag' => sub {
         is($translation->set_language(undef), 'zh_Hant',
            'Accept-Language zh-Hant-TW selects zh_Hant');
 
+        $translation->languages([qw( zh-tw zh en i-default )]);
+        is($translation->set_language(undef), 'zh_Hant',
+           'Accept-Language zh-TW selects zh_Hant');
+
         $translation->set_language('zh-Hant');
         $translation->run_without_translations(sub {
             is($ENV{LANGUAGE}, '', 'LANGUAGE is clear without translations');
@@ -145,6 +183,31 @@ test 'set_language with a script subtag' => sub {
         $translation->set_language('en');
         is($ENV{LANGUAGE}, '', 'LANGUAGE is clear for other languages');
     }, qw( en zh-hant ));
+
+    # With both zh and zh-hant, a browser in Taiwan must get zh-hant, not
+    # the zh (Simplified Chinese) that follows zh-TW in its header.
+    with_mb_languages(sub {
+        for my $header ('zh-TW,zh;q=0.9,en;q=0.8', 'zh-HK,zh;q=0.9') {
+            $translation->build_languages_from_header(HTTP::Headers->new(
+                'Accept-Language' => $header,
+            ));
+            is($translation->set_language(undef), 'zh_Hant',
+               "Accept-Language $header selects zh_Hant, not zh");
+        }
+
+        for my $header ('en;q=1, zh-TW;q=0.8', 'zh-TW;q=0.8, en;q=1') {
+            $translation->build_languages_from_header(HTTP::Headers->new(
+                'Accept-Language' => $header,
+            ));
+            is($translation->set_language(undef), 'en',
+               "Accept-Language $header selects en");
+        }
+        $translation->build_languages_from_header(HTTP::Headers->new(
+            'Accept-Language' => 'zh-TW,zh;q=0.9',
+        ));
+        is($translation->set_language('en'), 'en',
+           'The lang cookie comes before the header');
+    }, qw( en zh zh-hant ));
 
     # zh_TW reads the zh catalog, and zh_Hant reads the zh_Hant catalog, but
     # both use the zh_TW system locale.
